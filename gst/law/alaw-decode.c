@@ -38,7 +38,8 @@ static GstStateChangeReturn
 gst_alaw_dec_change_state (GstElement * element, GstStateChange transition);
 static GstFlowReturn gst_alaw_dec_chain (GstPad * pad, GstBuffer * buffer);
 
-GST_BOILERPLATE (GstALawDec, gst_alaw_dec, GstElement, GST_TYPE_ELEMENT);
+#define gst_alaw_dec_parent_class parent_class
+G_DEFINE_TYPE (GstALawDec, gst_alaw_dec, GST_TYPE_BIN);
 
 /* some day we might have defines in gstconfig.h that tell us about the
  * desired cpu/memory/binary size trade-offs */
@@ -110,15 +111,12 @@ alaw_to_s16 (guint8 a_val)
 #endif /* GST_ALAW_DEC_USE_TABLE */
 
 static gboolean
-gst_alaw_dec_sink_setcaps (GstPad * pad, GstCaps * caps)
+gst_alaw_dec_sink_setcaps (GstALawDec * alawdec, GstCaps * caps)
 {
-  GstALawDec *alawdec;
   GstStructure *structure;
   int rate, channels;
   gboolean ret;
   GstCaps *outcaps;
-
-  alawdec = GST_ALAW_DEC (GST_PAD_PARENT (pad));
 
   structure = gst_caps_get_structure (caps, 0);
 
@@ -142,11 +140,12 @@ gst_alaw_dec_sink_setcaps (GstPad * pad, GstCaps * caps)
     alawdec->rate = rate;
     alawdec->channels = channels;
   }
+
   return ret;
 }
 
 static GstCaps *
-gst_alaw_dec_getcaps (GstPad * pad)
+gst_alaw_dec_getcaps (GstPad * pad, GstCaps * filter)
 {
   GstALawDec *alawdec;
   GstPad *otherpad;
@@ -166,7 +165,7 @@ gst_alaw_dec_getcaps (GstPad * pad)
     otherpad = alawdec->srcpad;
   }
   /* get caps from the peer, this can return NULL when there is no peer */
-  othercaps = gst_pad_peer_get_caps (otherpad);
+  othercaps = gst_pad_peer_get_caps (otherpad, NULL);
 
   /* get the template caps to make sure we return something acceptable */
   templ = gst_pad_get_pad_template_caps (pad);
@@ -208,9 +207,11 @@ gst_alaw_dec_getcaps (GstPad * pad)
 }
 
 static void
-gst_alaw_dec_base_init (gpointer klass)
+gst_alaw_dec_class_init (GstALawDecClass * klass)
 {
-  GstElementClass *element_class = GST_ELEMENT_CLASS (klass);
+  GstElementClass *element_class = (GstElementClass *) klass;
+
+  element_class->change_state = GST_DEBUG_FUNCPTR (gst_alaw_dec_change_state);
 
   gst_element_class_add_pad_template (element_class,
       gst_static_pad_template_get (&alaw_dec_src_factory));
@@ -225,20 +226,10 @@ gst_alaw_dec_base_init (gpointer klass)
 }
 
 static void
-gst_alaw_dec_class_init (GstALawDecClass * klass)
-{
-  GstElementClass *element_class = (GstElementClass *) klass;
-
-  element_class->change_state = GST_DEBUG_FUNCPTR (gst_alaw_dec_change_state);
-}
-
-static void
-gst_alaw_dec_init (GstALawDec * alawdec, GstALawDecClass * klass)
+gst_alaw_dec_init (GstALawDec * alawdec)
 {
   alawdec->sinkpad =
       gst_pad_new_from_static_template (&alaw_dec_sink_factory, "sink");
-  gst_pad_set_setcaps_function (alawdec->sinkpad,
-      GST_DEBUG_FUNCPTR (gst_alaw_dec_sink_setcaps));
   gst_pad_set_getcaps_function (alawdec->sinkpad,
       GST_DEBUG_FUNCPTR (gst_alaw_dec_getcaps));
   gst_pad_set_chain_function (alawdec->sinkpad,
@@ -259,7 +250,7 @@ gst_alaw_dec_chain (GstPad * pad, GstBuffer * buffer)
   GstALawDec *alawdec;
   gint16 *linear_data;
   guint8 *alaw_data;
-  guint alaw_size;
+  gsize alaw_size;
   GstBuffer *outbuf;
   gint i;
   GstFlowReturn ret;
@@ -272,17 +263,10 @@ gst_alaw_dec_chain (GstPad * pad, GstBuffer * buffer)
   GST_LOG_OBJECT (alawdec, "buffer with ts=%" GST_TIME_FORMAT,
       GST_TIME_ARGS (GST_BUFFER_TIMESTAMP (buffer)));
 
-  alaw_data = GST_BUFFER_DATA (buffer);
-  alaw_size = GST_BUFFER_SIZE (buffer);
+  alaw_data = gst_buffer_map (buffer, &alaw_size, NULL, GST_MAP_READ);
 
-  ret =
-      gst_pad_alloc_buffer_and_set_caps (alawdec->srcpad,
-      GST_BUFFER_OFFSET_NONE, alaw_size * 2, GST_PAD_CAPS (alawdec->srcpad),
-      &outbuf);
-  if (ret != GST_FLOW_OK)
-    goto alloc_failed;
-
-  linear_data = (gint16 *) GST_BUFFER_DATA (outbuf);
+  outbuf = gst_buffer_new_and_alloc (alaw_size);
+  linear_data = gst_buffer_map (outbuf, NULL, NULL, GST_MAP_READ);
 
   /* copy discont flag */
   if (GST_BUFFER_FLAG_IS_SET (buffer, GST_BUFFER_FLAG_DISCONT))
@@ -290,7 +274,8 @@ gst_alaw_dec_chain (GstPad * pad, GstBuffer * buffer)
 
   GST_BUFFER_TIMESTAMP (outbuf) = GST_BUFFER_TIMESTAMP (buffer);
   GST_BUFFER_DURATION (outbuf) = GST_BUFFER_DURATION (buffer);
-  gst_buffer_set_caps (outbuf, GST_PAD_CAPS (alawdec->srcpad));
+  gst_pad_set_caps (alawdec->sinkpad,
+      gst_pad_get_current_caps (alawdec->srcpad));
 
   for (i = 0; i < alaw_size; i++) {
     linear_data[i] = alaw_to_s16 (alaw_data[i]);
@@ -306,13 +291,6 @@ not_negotiated:
     gst_buffer_unref (buffer);
     GST_WARNING_OBJECT (alawdec, "no input format set: not-negotiated");
     return GST_FLOW_NOT_NEGOTIATED;
-  }
-alloc_failed:
-  {
-    gst_buffer_unref (buffer);
-    GST_DEBUG_OBJECT (alawdec, "pad alloc failed, flow: %s",
-        gst_flow_get_name (ret));
-    return ret;
   }
 }
 
