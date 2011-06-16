@@ -186,12 +186,11 @@ static gboolean
 gst_goom_sink_setcaps (GstGoom * goom, GstCaps * caps)
 {
   GstStructure *structure;
-  gboolean res;
 
   structure = gst_caps_get_structure (caps, 0);
 
-  res = gst_structure_get_int (structure, "channels", &goom->channels);
-  res &= gst_structure_get_int (structure, "rate", &goom->rate);
+  gst_structure_get_int (structure, "channels", &goom->channels);
+  gst_structure_get_int (structure, "rate", &goom->rate);
 
   goom->bps = goom->channels * sizeof (gint16);
 
