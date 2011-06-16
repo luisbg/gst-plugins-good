@@ -36,7 +36,8 @@ extern GstStaticPadTemplate alaw_enc_sink_factory;
 
 static GstFlowReturn gst_alaw_enc_chain (GstPad * pad, GstBuffer * buffer);
 
-GST_BOILERPLATE (GstALawEnc, gst_alaw_enc, GstElement, GST_TYPE_ELEMENT);
+#define gst_alaw_enc_parent_class parent_class
+G_DEFINE_TYPE (GstALawEnc, gst_alaw_enc, GST_TYPE_BIN);
 
 /* some day we might have defines in gstconfig.h that tell us about the
  * desired cpu/memory/binary size trade-offs */
@@ -297,7 +298,7 @@ s16_to_alaw (gint pcm_val)
 #endif /* GST_ALAW_ENC_USE_TABLE */
 
 static GstCaps *
-gst_alaw_enc_getcaps (GstPad * pad)
+gst_alaw_enc_getcaps (GstPad * pad, GstCaps * filter)
 {
   GstALawEnc *alawenc;
   GstPad *otherpad;
@@ -317,7 +318,7 @@ gst_alaw_enc_getcaps (GstPad * pad)
     otherpad = alawenc->srcpad;
   }
   /* get caps from the peer, this can return NULL when there is no peer */
-  othercaps = gst_pad_peer_get_caps (otherpad);
+  othercaps = gst_pad_peer_get_caps (otherpad, NULL);
 
   /* get the template caps to make sure we return something acceptable */
   templ = gst_pad_get_pad_template_caps (pad);
@@ -358,47 +359,12 @@ gst_alaw_enc_getcaps (GstPad * pad)
   return result;
 }
 
-static gboolean
-gst_alaw_enc_setcaps (GstPad * pad, GstCaps * caps)
-{
-  GstALawEnc *alawenc;
-  GstPad *otherpad;
-  GstStructure *structure;
-  gboolean ret;
-  GstCaps *base_caps;
-
-  alawenc = GST_ALAW_ENC (GST_PAD_PARENT (pad));
-
-  structure = gst_caps_get_structure (caps, 0);
-  gst_structure_get_int (structure, "channels", &alawenc->channels);
-  gst_structure_get_int (structure, "rate", &alawenc->rate);
-
-  if (pad == alawenc->sinkpad) {
-    otherpad = alawenc->srcpad;
-  } else {
-    otherpad = alawenc->sinkpad;
-  }
-
-  base_caps = gst_caps_copy (gst_pad_get_pad_template_caps (otherpad));
-  structure = gst_caps_get_structure (base_caps, 0);
-  gst_structure_set (structure, "rate", G_TYPE_INT, alawenc->rate, NULL);
-  gst_structure_set (structure, "channels", G_TYPE_INT, alawenc->channels,
-      NULL);
-
-  GST_DEBUG_OBJECT (alawenc, "rate=%d, channels=%d", alawenc->rate,
-      alawenc->channels);
-
-  ret = gst_pad_set_caps (otherpad, base_caps);
-
-  gst_caps_unref (base_caps);
-
-  return ret;
-}
-
 static void
-gst_alaw_enc_base_init (gpointer klass)
+gst_alaw_enc_class_init (GstALawEncClass * klass)
 {
-  GstElementClass *element_class = GST_ELEMENT_CLASS (klass);
+  /* nothing to do here for now */
+
+  GstElementClass *element_class = (GstElementClass *) klass;
 
   gst_element_class_add_pad_template (element_class,
       gst_static_pad_template_get (&alaw_enc_src_factory));
@@ -414,18 +380,10 @@ gst_alaw_enc_base_init (gpointer klass)
 }
 
 static void
-gst_alaw_enc_class_init (GstALawEncClass * klass)
-{
-  /* nothing to do here for now */
-}
-
-static void
-gst_alaw_enc_init (GstALawEnc * alawenc, GstALawEncClass * klass)
+gst_alaw_enc_init (GstALawEnc * alawenc)
 {
   alawenc->sinkpad =
       gst_pad_new_from_static_template (&alaw_enc_sink_factory, "sink");
-  gst_pad_set_setcaps_function (alawenc->sinkpad,
-      GST_DEBUG_FUNCPTR (gst_alaw_enc_setcaps));
   gst_pad_set_getcaps_function (alawenc->sinkpad,
       GST_DEBUG_FUNCPTR (gst_alaw_enc_getcaps));
   gst_pad_set_chain_function (alawenc->sinkpad,
@@ -434,8 +392,6 @@ gst_alaw_enc_init (GstALawEnc * alawenc, GstALawEncClass * klass)
 
   alawenc->srcpad =
       gst_pad_new_from_static_template (&alaw_enc_src_factory, "src");
-  gst_pad_set_setcaps_function (alawenc->srcpad,
-      GST_DEBUG_FUNCPTR (gst_alaw_enc_setcaps));
   gst_pad_set_getcaps_function (alawenc->srcpad,
       GST_DEBUG_FUNCPTR (gst_alaw_enc_getcaps));
   gst_pad_use_fixed_caps (alawenc->srcpad);
@@ -451,21 +407,20 @@ gst_alaw_enc_chain (GstPad * pad, GstBuffer * buffer)
 {
   GstALawEnc *alawenc;
   gint16 *linear_data;
-  guint linear_size;
+  gsize linear_size;
   guint8 *alaw_data;
   guint alaw_size;
   GstBuffer *outbuf;
   gint i;
-  GstFlowReturn ret;
   GstClockTime timestamp, duration;
+  GstFlowReturn ret;
 
   alawenc = GST_ALAW_ENC (GST_PAD_PARENT (pad));
 
   if (G_UNLIKELY (alawenc->rate == 0 || alawenc->channels == 0))
     goto not_negotiated;
 
-  linear_data = (gint16 *) GST_BUFFER_DATA (buffer);
-  linear_size = GST_BUFFER_SIZE (buffer);
+  linear_data = gst_buffer_map (buffer, &linear_size, NULL, GST_MAP_READ);
 
   alaw_size = linear_size / 2;
 
@@ -475,25 +430,13 @@ gst_alaw_enc_chain (GstPad * pad, GstBuffer * buffer)
   GST_LOG_OBJECT (alawenc, "buffer with ts=%" GST_TIME_FORMAT,
       GST_TIME_ARGS (timestamp));
 
-  ret =
-      gst_pad_alloc_buffer_and_set_caps (alawenc->srcpad,
-      GST_BUFFER_OFFSET_NONE, alaw_size, GST_PAD_CAPS (alawenc->srcpad),
-      &outbuf);
-  if (ret != GST_FLOW_OK)
-    goto done;
-
   if (duration == GST_CLOCK_TIME_NONE) {
     duration = gst_util_uint64_scale_int (alaw_size,
         GST_SECOND, alawenc->rate * alawenc->channels);
   }
 
-  if (GST_BUFFER_SIZE (outbuf) < alaw_size) {
-    /* pad-alloc can return a smaller buffer */
-    gst_buffer_unref (outbuf);
-    outbuf = gst_buffer_new_and_alloc (alaw_size);
-  }
-
-  alaw_data = (guint8 *) GST_BUFFER_DATA (outbuf);
+  outbuf = gst_buffer_new_and_alloc (alaw_size);
+  alaw_data = gst_buffer_map (outbuf, alaw_size, NULL, GST_MAP_WRITE);
 
   /* copy discont flag */
   if (GST_BUFFER_FLAG_IS_SET (buffer, GST_BUFFER_FLAG_DISCONT))
@@ -502,7 +445,8 @@ gst_alaw_enc_chain (GstPad * pad, GstBuffer * buffer)
   GST_BUFFER_TIMESTAMP (outbuf) = timestamp;
   GST_BUFFER_DURATION (outbuf) = duration;
 
-  gst_buffer_set_caps (outbuf, GST_PAD_CAPS (alawenc->srcpad));
+  gst_pad_set_caps (alawenc->sinkpad,
+      gst_pad_get_current_caps (alawenc->srcpad));
 
   for (i = 0; i < alaw_size; i++) {
     alaw_data[i] = s16_to_alaw (linear_data[i]);
