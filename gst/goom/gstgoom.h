@@ -1,5 +1,6 @@
 /* gstgoom.c: implementation of goom drawing element
  * Copyright (C) <2001> Richard Boulton <richard@tartarus.org>
+ * Copyright (C) <2015> Luis de Bethencourt <luis@debethencourt.com>
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Library General Public
@@ -20,11 +21,10 @@
 #ifndef __GST_GOOM_H__
 #define __GST_GOOM_H__
 
-G_BEGIN_DECLS
-
-#include <gst/gst.h>
-#include <gst/base/gstadapter.h>
+#include "gst/pbutils/gstaudiovisualizer.h"
 #include "goom.h"
+
+G_BEGIN_DECLS
 
 #define GOOM_SAMPLES 512
 
@@ -39,11 +39,7 @@ typedef struct _GstGoomClass GstGoomClass;
 
 struct _GstGoom
 {
-  GstElement element;
-
-  /* pads */
-  GstPad *sinkpad, *srcpad;
-  GstAdapter *adapter;
+  GstAudioVisualizer parent;
 
   /* input tracking */
   gint rate;
@@ -57,22 +53,13 @@ struct _GstGoom
   gint height;
   GstClockTime duration;
   guint outsize;
-  GstBufferPool *pool;
 
   guint dropped;        /* frames dropped / not dropped */
   guint processed;
 
-  /* samples per frame */
-  guint spf;
-  /* bytes per frame */
-  guint bpf;
-
   /* goom stuff */
   gint16 datain[2][GOOM_SAMPLES];
   PluginInfo *plugin;
-
-  /* segment state */
-  GstSegment segment;
 
   /* QoS stuff *//* with LOCK */
   gdouble proportion;
@@ -81,10 +68,11 @@ struct _GstGoom
 
 struct _GstGoomClass
 {
-  GstElementClass parent_class;
+  GstAudioVisualizerClass parent_class;
 };
 
 GType gst_goom_get_type (void);
+gboolean gst_goom_plugin_init (GstPlugin * plugin);
 
 G_END_DECLS
 
