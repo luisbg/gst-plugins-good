@@ -52,8 +52,6 @@ GST_DEBUG_CATEGORY (goom_debug);
 
 #define DEFAULT_WIDTH  320
 #define DEFAULT_HEIGHT 240
-#define DEFAULT_FPS_N  25
-#define DEFAULT_FPS_D  1
 
 /* signals and args */
 enum
@@ -95,7 +93,6 @@ static GstStaticPadTemplate sink_template = GST_STATIC_PAD_TEMPLATE ("sink",    
 
 
 static void gst_goom_finalize (GObject * object);
-static void gst_goom_reset (GstGoom * goom);
 
 static gboolean gst_goom_setup (GstAudioVisualizer * base);
 static gboolean gst_goom_render (GstAudioVisualizer * base, GstBuffer * audio,
@@ -134,15 +131,9 @@ gst_goom_init (GstGoom * goom)
 {
   goom->width = DEFAULT_WIDTH;
   goom->height = DEFAULT_HEIGHT;
-  goom->fps_n = DEFAULT_FPS_N;  /* desired frame rate */
-  goom->fps_d = DEFAULT_FPS_D;  /* desired frame rate */
   goom->channels = 0;
-  goom->rate = 0;
-  goom->duration = 0;
 
   goom->plugin = goom_init (goom->width, goom->height);
-
-  gst_goom_reset (goom);
 }
 
 static void
@@ -154,18 +145,6 @@ gst_goom_finalize (GObject * object)
   goom->plugin = NULL;
 
   G_OBJECT_CLASS (gst_goom_parent_class)->finalize (object);
-}
-
-static void
-gst_goom_reset (GstGoom * goom)
-{
-  GST_OBJECT_LOCK (goom);
-  goom->proportion = 1.0;
-  goom->earliest_time = GST_CLOCK_TIME_NONE;
-  GST_OBJECT_UNLOCK (goom);
-
-  goom->dropped = 0;
-  goom->processed = 0;
 }
 
 static gboolean
@@ -185,6 +164,7 @@ gst_goom_render (GstAudioVisualizer * base, GstBuffer * audio,
 {
   GstGoom *goom = GST_GOOM (base);
   GstMapInfo amap;
+  gint16 datain[2][GOOM_SAMPLES];
   gint16 *adata;
   gint i;
 
@@ -194,17 +174,17 @@ gst_goom_render (GstAudioVisualizer * base, GstBuffer * audio,
 
   if (goom->channels == 2) {
     for (i = 0; i < GOOM_SAMPLES; i++) {
-      goom->datain[0][i] = *adata++;
-      goom->datain[1][i] = *adata++;
+      datain[0][i] = *adata++;
+      datain[1][i] = *adata++;
     }
   } else {
     for (i = 0; i < GOOM_SAMPLES; i++) {
-      goom->datain[0][i] = *adata;
-      goom->datain[1][i] = *adata++;
+      datain[0][i] = *adata;
+      datain[1][i] = *adata++;
     }
   }
 
-  video->data[0] = goom_update (goom->plugin, goom->datain, 0, 0);
+  video->data[0] = goom_update (goom->plugin, datain, 0, 0);
   gst_buffer_unmap (audio, &amap);
 
   return TRUE;
